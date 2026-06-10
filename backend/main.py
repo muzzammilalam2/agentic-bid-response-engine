@@ -458,16 +458,19 @@ def get_battlecard(
     workspace_id: str,
     x_gemini_api_key: str = Header(None),
     use_llm: bool = Query(False),
-    llm_model: str = Query("gemini-1.5-flash")
+    llm_model: str = Query("gemini-1.5-flash"),
+    force_refresh: bool = Query(False)
 ):
     conn = db_connect()
     cursor = conn.cursor()
-    cursor.execute("SELECT content FROM competitor_battlecards WHERE workspace_id = ?", (workspace_id,))
-    row = cursor.fetchone()
     
-    if row:
-        conn.close()
-        return {"battlecard": row["content"]}
+    if not force_refresh:
+        cursor.execute("SELECT content FROM competitor_battlecards WHERE workspace_id = ?", (workspace_id,))
+        row = cursor.fetchone()
+        
+        if row:
+            conn.close()
+            return {"battlecard": row["content"]}
         
     # Generate dynamically if missing
     cursor.execute("SELECT client, competitors FROM workspaces WHERE id = ?", (workspace_id,))
