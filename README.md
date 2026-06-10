@@ -12,6 +12,12 @@ An AI-powered pre-sales automation assistant designed to streamline the evaluati
   * **Scorer Agent:** Evaluates historical statistics to calculate Win Probability and recommends a **GO/NO-GO** decision.
   * **Writer Agent:** Synthesizes custom technical narrative responses referencing past projects.
   * **Reviewer Agent:** Flags compliance gaps and writes review commentary.
+* **Hybrid AI & Offline Modes (Robust Error Fallbacks):**
+  * Runs entirely offline by default (using keyword heuristics and templated drafts).
+  * Enable **Gemini AI Mode** for LLM-powered extraction and custom narratives.
+  * If API keys expire, fail, or hit network quota limits, the agents automatically fall back to local rule-based modules without throwing HTTP errors.
+* **Dynamic Model Switching:** Swaps between Google Gemini models (`gemini-1.5-flash`, `gemini-1.5-pro`, `gemini-2.0-flash-exp`) on-the-fly directly from the Streamlit UI settings sidebar.
+* **Zero-Configuration Environment Loader:** Automatically checks parent folders and loads the `.env` configuration file recursively using `python-dotenv`, making credential integration platform-independent.
 * **Role-Based Access Control (RBAC):**
   * **Bid Manager (`admin`):** Full privileges (create workspaces, override checklist status, upload capability records).
   * **Pre-Sales Writer (`writer`):** Modify proposal drafts and export responses.
@@ -59,16 +65,25 @@ bid-proposal-engine/
    ```bash
    python3 -m venv venv
    source venv/bin/activate
-   pip install -r backend/requirements.txt
    ```
 
-3. **Run the FastAPI Backend:**
+3. **Configure Environment Variables:**
+   Copy the example environment file and add your Google Gemini API Key:
+   ```bash
+   cp .env.example .env
+   ```
+   Open the `.env` file and replace `your_gemini_api_key_here` with your actual Google Gemini API key:
+   ```env
+   GEMINI_API_KEY=AIzaSy...
+   ```
+
+4. **Run the FastAPI Backend:**
    ```bash
    cd backend
    uvicorn main:app --host 127.0.0.1 --port 8000 --reload
    ```
 
-4. **Run the Streamlit Frontend:**
+5. **Run the Streamlit Frontend:**
    *Open a separate terminal window and run:*
    ```bash
    cd frontend

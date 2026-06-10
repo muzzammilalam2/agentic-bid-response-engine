@@ -6,13 +6,14 @@ import json
 from database import db_connect
 from scoring import WinProbabilityScorer
 from rag_engine import RAGEngine
+import google.generativeai as genai
 
 class ProposalWorkflowManager:
     def __init__(self):
         self.scorer = WinProbabilityScorer()
         self.rag = RAGEngine()
 
-    def run_workflow(self, workspace_id, rfp_title, rfp_text, sector, budget_str, deadline):
+    def run_workflow(self, workspace_id, rfp_title, rfp_text, sector, budget_str, deadline, use_llm=False, api_key=None, llm_model="gemini-1.5-flash"):
         """
         Executes the multi-agent proposal flow:
         1. Analyst Agent: Parses RFP text to find compliance requirements and questions.
@@ -24,6 +25,18 @@ class ProposalWorkflowManager:
         conn = db_connect()
         cursor = conn.cursor()
         
+        # Configure Gemini if requested
+        gemini_active = False
+        if use_llm:
+            effective_key = api_key or os.environ.get("GEMINI_API_KEY")
+            if effective_key:
+                try:
+                    genai.configure(api_key=effective_key)
+                    gemini_active = True
+                    print(f"Gemini LLM pipeline successfully initialized with model '{llm_model}' in run_workflow.")
+                except Exception as ex:
+                    print("Failed to initialize Google Generative AI, defaulting to offline templates:", ex)
+
         # Initialize/Update Workspace
         cursor.execute("""
         INSERT OR REPLACE INTO workspaces (id, title, client, budget, deadline, status)
@@ -32,7 +45,7 @@ class ProposalWorkflowManager:
         conn.commit()
         
         # 1. Analyst Agent - Parse requirements and questions
-        parsed = self._analyst_parse(rfp_text)
+        parsed = self._analyst_parse(rfp_text, use_llm=gemini_active, llm_model=llm_model)
         requirements = parsed["requirements"]
         questions = parsed["questions"]
         
@@ -98,7 +111,8 @@ class ProposalWorkflowManager:
             evidence_str = "\n".join(evidence_list) if evidence_list else "No past projects matched."
             
             # Writer Agent - Draft response
-            drafted_answer = self._writer_draft(q_id, q_prompt, primary_cap)
+            drafted_answer = self._writer_draft(q_id, q_prompt, primary_cap, use_llm=gemini_active, llm_model=llm_model)
+
             
             # Reviewer Agent - Validate drafted response
             reviewer_comments = "Response draft verified against company references."
@@ -165,10 +179,42 @@ class ProposalWorkflowManager:
             "questions_count": len(proposal_drafts)
         }
 
-    def _analyst_parse(self, rfp_text):
+    def _analyst_parse(self, rfp_text, use_llm=False, llm_model="gemini-1.5-flash"):
         """
-        Parses RFP text into requirements and questions using simple heuristics.
+        Parses RFP text into requirements and questions.
+        If use_llm is True, calls Gemini to extract structured JSON.
+        Otherwise falls back to keyword heuristics.
         """
+        if use_llm:
+            try:
+                prompt = (
+                    "You are a professional proposal analyst. Analyze the following Request for Proposal (RFP) text.\n"
+                    "Extract two lists in JSON format:\n"
+                    "1. 'requirements': A list of all mandatory, certification, SLA, KPI, or technical specifications that a bidder must meet.\n"
+                    "2. 'questions': A list of explicit questions, question prompts, or sections that the vendor is asked to describe/explain/detail in their response.\n\n"
+                    "Do not include generic headings or metadata in the list. Keep extracted items concise and verbatim where possible.\n"
+                    "Ensure your output is strictly a JSON object with keys 'requirements' and 'questions'. Do not output any markdown formatting or surrounding explanation, only raw JSON.\n\n"
+                    f"RFP Text:\n{rfp_text}"
+                )
+                model = genai.GenerativeModel(llm_model)
+                response = model.generate_content(prompt)
+                
+                # Clean up JSON if LLM returned markdown block
+                clean_json_str = response.text.strip()
+                if clean_json_str.startswith("```"):
+                    clean_json_str = re.sub(r"^```(?:json)?", "", clean_json_str)
+                    clean_json_str = re.sub(r"```$", "", clean_json_str).strip()
+                
+                parsed_data = json.loads(clean_json_str)
+                if isinstance(parsed_data, dict) and "requirements" in parsed_data and "questions" in parsed_data:
+                    return {
+                        "requirements": [str(r).strip() for r in parsed_data["requirements"] if str(r).strip()],
+                        "questions": [str(q).strip() for q in parsed_data["questions"] if str(q).strip()]
+                    }
+            except Exception as e:
+                print("Gemini Analyst extraction failed, falling back to rule-based parser:", e)
+
+        # Fallback keyword rules (the offline/offline-by-default logic)
         requirements = []
         questions = []
         
@@ -203,13 +249,46 @@ class ProposalWorkflowManager:
             "questions": questions
         }
 
-    def _writer_draft(self, q_id, q_prompt, cap):
+    def _writer_draft(self, q_id, q_prompt, cap, use_llm=False, llm_model="gemini-1.5-flash"):
         """
         Drafts technical proposal responses citing the matched capability context.
+        Uses Gemini if use_llm is True; otherwise falls back to static templates.
         """
+        if use_llm:
+            try:
+                if not cap:
+                    prompt = (
+                        f"You are a professional proposal writer. Write a comprehensive response to the question: '{q_prompt}'.\n"
+                        "Our organization has a long-standing history of executing complex projects in this domain. "
+                        "We implement standard best practices and agile methodologies. "
+                        "Since no specific project reference is matching, write a professional, high-quality, but general response "
+                        "explaining our expertise, delivery framework, and risk mitigation strategies. Use Markdown formatting."
+                    )
+                else:
+                    prompt = (
+                        f"You are a professional proposal writer. Write a detailed, persuasive technical response to the question: '{q_prompt}'.\n"
+                        "To prove our capability, you MUST cite and reference our matched corporate experience from this project summary:\n"
+                        f"Project: {cap['project_summary']}\n"
+                        f"Domain: {cap['domain']}\n"
+                        f"Certification: {cap['certification']}\n"
+                        f"Contract Value: {cap['contract_value']}\n"
+                        f"Duration: {cap['duration_months']} months\n"
+                        f"Client Type: {cap['client_type']}\n\n"
+                        "Write a compelling technical response detailing how we will apply our experience, team structure, "
+                        "and compliance track record to deliver on the client's goals. Incorporate bullet points and structured sections. "
+                        "Format the output using standard Markdown."
+                    )
+                
+                model = genai.GenerativeModel(llm_model)
+                response = model.generate_content(prompt)
+                return response.text.strip()
+            except Exception as e:
+                print("Gemini Writer draft generation failed, falling back to templated drafting:", e)
+
+        # Fallback template rules (the offline/offline-by-default logic)
         if not cap:
             return (
-                f"Antigravity Draft Response for {q_id}:\n\n"
+                f"AI-Powered Draft Response for {q_id}:\n\n"
                 "Our organization has a long-standing history of executing complex projects in this domain. "
                 "We implement industry-standard best practices, utilize agile methodologies, and ensure all "
                 "activities comply with local and international regulatory standard requirements. "

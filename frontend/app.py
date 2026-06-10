@@ -1,10 +1,13 @@
 import streamlit as st
 import requests
 import datetime
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+
 
 # Page configuration
 st.set_page_config(
-    page_title="Antigravity Bid Proposal Engine",
+    page_title="AI-Powered Bid & Proposal Response Engine",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -76,7 +79,7 @@ html, body, [class*="css"] {
 API_URL = "http://localhost:8000"
 
 # Sidebar Workspace Manager
-st.sidebar.markdown("<h2 style='color:#58a6ff;'>🚀 Antigravity Engine</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h3 style='color:#58a6ff; font-size: 1.15rem; font-weight: 800; margin-top: 0;'>AI-Powered Bid & Proposal Response Engine</h3>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 # User Session Switcher
@@ -137,7 +140,21 @@ if "new_workspace_option" in st.session_state:
 selected_option = st.sidebar.selectbox("Active RFP Workspaces", workspace_options, index=default_index)
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **Hackathon Tips:**\n1. Select standard templates below to prototype in one click.\n2. Standardize database records via SQLite and vector similarity metrics via Qdrant emulations.")
+
+# Gemini AI Configuration Panel
+st.sidebar.markdown("<h4 style='color:#c9d1d9; margin-bottom:5px;'>🧠 Gemini AI Settings</h4>", unsafe_allow_html=True)
+use_llm = st.sidebar.checkbox("Enable Gemini AI Mode", value=False, help="Uses Google Gemini model for deep RFP parsing and proposal narrative writing.")
+gemini_api_key = ""
+selected_model = "gemini-1.5-flash"
+if use_llm:
+    # Look for environment variable first
+    import os
+    env_key = os.environ.get("GEMINI_API_KEY", "")
+    gemini_api_key = st.sidebar.text_input("Gemini API Key:", value=env_key, type="password", help="Enter your Google AI Studio API key. Left blank, it falls back to backend env var.")
+    model_options = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+    selected_model = st.sidebar.selectbox("Gemini Model:", options=model_options, index=0, help="Select the Google Gemini LLM model to use.")
+
+
 
 with st.sidebar.expander("📚 Ingest Capability Files", expanded=False):
     st.markdown("Build your RAG database by uploading documents (PDF, DOCX, XLSX, TXT):")
@@ -288,13 +305,19 @@ if selected_option == "Select or Create Workspace":
                             "sector": sector,
                             "budget": budget,
                             "deadline": deadline.strftime("%Y-%m-%d"),
-                            "rfp_text": rfp_text if rfp_text else ""
+                            "rfp_text": rfp_text if rfp_text else "",
+                            "use_llm": use_llm,
+                            "llm_model": selected_model
                         }
                         files = {}
                         if rfp_file:
                             files["rfp_file"] = (rfp_file.name, rfp_file.getvalue(), rfp_file.type)
                             
-                        res = requests.post(f"{API_URL}/workspaces", data=payload, files=files if rfp_file else None, headers=headers)
+                        req_headers = headers.copy()
+                        if use_llm and gemini_api_key:
+                            req_headers["X-Gemini-API-Key"] = gemini_api_key
+                            
+                        res = requests.post(f"{API_URL}/workspaces", data=payload, files=files if rfp_file else None, headers=req_headers)
                         if res.status_code == 200:
                             ws_id = res.json()["workspace_id"]
                             st.session_state["new_workspace_option"] = f"{title} [{ws_id}]"
