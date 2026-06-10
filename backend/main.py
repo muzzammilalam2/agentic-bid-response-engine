@@ -3,6 +3,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uuid
 import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+
 import io
 import docx
 from docx.shared import Inches, Pt, RGBColor
@@ -154,6 +157,9 @@ def create_workspace(
     deadline: str = Form(...),
     rfp_text: str = Form(None),
     rfp_file: UploadFile = File(None),
+    use_llm: bool = Form(False),
+    llm_model: str = Form("gemini-1.5-flash"),
+    x_gemini_api_key: str = Header(None),
     username: str = Depends(verify_permission("create_workspace"))
 ):
     if rfp_file:
@@ -168,14 +174,17 @@ def create_workspace(
 
     workspace_id = str(uuid.uuid4())[:8]
     
-    # Run Agentic Proposal Loop
+    # Run Agentic Proposal Loop (handling both Offline and LLM modes)
     res = workflow_manager.run_workflow(
         workspace_id=workspace_id,
         rfp_title=title,
         rfp_text=rfp_text,
         sector=sector,
         budget_str=budget,
-        deadline=deadline
+        deadline=deadline,
+        use_llm=use_llm,
+        api_key=x_gemini_api_key,
+        llm_model=llm_model
     )
     
     return {
