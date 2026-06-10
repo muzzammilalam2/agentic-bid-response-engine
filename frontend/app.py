@@ -79,7 +79,7 @@ html, body, [class*="css"] {
 API_URL = "http://localhost:8000"
 
 # Sidebar Workspace Manager
-st.sidebar.markdown("<h3 style='color:#58a6ff; font-size: 1.15rem; font-weight: 800; margin-top: 0;'>🤖 AI-Powered Bid & Proposal Response Engine</h3>", unsafe_allow_html=True)
+st.sidebar.markdown("<h3 style='color:#58a6ff; font-size: 1.15rem; font-weight: 800; margin-top: 0;'>AI-Powered Bid & Proposal Response Engine</h3>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 # User Session Switcher
@@ -154,8 +154,7 @@ if use_llm:
     model_options = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
     selected_model = st.sidebar.selectbox("Gemini Model:", options=model_options, index=0, help="Select the Google Gemini LLM model to use.")
 
-st.sidebar.markdown("---")
-st.sidebar.info("💡 **Hackathon Tips:**\n1. Select standard templates below to prototype in one click.\n2. Standardize database records via SQLite and vector similarity metrics via Qdrant emulations.")
+
 
 with st.sidebar.expander("📚 Ingest Capability Files", expanded=False):
     st.markdown("Build your RAG database by uploading documents (PDF, DOCX, XLSX, TXT):")
