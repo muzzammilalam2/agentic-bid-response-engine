@@ -6,6 +6,11 @@ An AI-powered pre-sales automation assistant designed to streamline the evaluati
 
 ## 🌟 Key Features
 
+* **Hackathon Winning Core Upgrades (Phase 6):**
+  * **⚔️ Competitor Battlecard Generator:** Generates strategic SWOT matrices, weaknesses, and counter-punches for specified competitors against target verticals, caching results in SQLite to optimize API usage.
+  * **🔮 Win Probability Simulator Sandbox:** An interactive real-time slider interface directly below metrics to model simulated budgets, compliance fits, competitor counts, and unresolved gaps.
+  * **💬 Context-Aware RFP Chat Copilot:** A chat console inside the workspace utilizing extracted requirements, SOW milestones, and proposal drafts to answer user queries with Gemini.
+  * **🤖 AI Gap Self-Correction Loop:** A button next to checklist failures that auto-generates realistic credentials satisfying requirements, uploads them into the vector database (prefixed with `RESOLVED-` for audit trails), re-runs similarity tests, and immediately flips the item status to **PASS**.
 * **Multi-Agent Collaborative Pipeline:**
   * **Analyst Agent:** Extracts mandatory compliance clauses, SLA terms, and proposal questions from RFP text or files.
   * **Researcher Agent:** Employs vector similarity queries to find matching company experience and credentials.
