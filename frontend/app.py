@@ -7,7 +7,7 @@ load_dotenv(find_dotenv())
 
 # Page configuration
 st.set_page_config(
-    page_title="Antigravity Bid Proposal Engine",
+    page_title="AI-Powered Bid & Proposal Response Engine",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -79,7 +79,7 @@ html, body, [class*="css"] {
 API_URL = "http://localhost:8000"
 
 # Sidebar Workspace Manager
-st.sidebar.markdown("<h2 style='color:#58a6ff;'>🚀 Antigravity Engine</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h3 style='color:#58a6ff; font-size: 1.15rem; font-weight: 800; margin-top: 0;'>🤖 AI-Powered Bid & Proposal Response Engine</h3>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 # User Session Switcher

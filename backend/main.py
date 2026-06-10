@@ -18,7 +18,7 @@ import re
 # Initialize SQLite database schema
 init_db()
 
-app = FastAPI(title="Antigravity Bid Proposal Response Engine API")
+app = FastAPI(title="AI-Powered Bid & Proposal Response Engine API")
 workflow_manager = ProposalWorkflowManager()
 
 def check_permission(username: str, required_permission: str):

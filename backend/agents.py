@@ -288,7 +288,7 @@ class ProposalWorkflowManager:
         # Fallback template rules (the offline/offline-by-default logic)
         if not cap:
             return (
-                f"Antigravity Draft Response for {q_id}:\n\n"
+                f"AI-Powered Draft Response for {q_id}:\n\n"
                 "Our organization has a long-standing history of executing complex projects in this domain. "
                 "We implement industry-standard best practices, utilize agile methodologies, and ensure all "
                 "activities comply with local and international regulatory standard requirements. "
