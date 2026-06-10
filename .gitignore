@@ -1,0 +1,13 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.ipynb_checkpoints/
+backend/chroma_db/
+backend/engine.db
+backend/temp/
+frontend/temp/
+.streamlit/

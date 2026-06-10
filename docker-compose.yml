@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      # Map the Excel file into the app root so the database seeder can access it
+      - ./dataset.xlsx:/Users/muzzammil/MyFolder/ciklum/hackhathon/bid-proposal-engine/dataset.xlsx
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - backend
