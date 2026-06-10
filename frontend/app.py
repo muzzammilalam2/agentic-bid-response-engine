@@ -341,6 +341,7 @@ if selected_option == "Select or Create Workspace":
                     except Exception as e:
                         st.error(f"Failed to connect to API: {e}")
 
+else:
     # Selected Workspace Detail View
     selected_id = selected_option.split("[")[-1].replace("]", "").strip()
     
