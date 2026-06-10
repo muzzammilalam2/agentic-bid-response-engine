@@ -134,15 +134,17 @@ except Exception:
 # Workspace list
 workspace_options = ["Select or Create Workspace"] + [f"{w['title']} [{w['id']}]" for w in workspaces]
 
-default_index = 0
 if "new_workspace_option" in st.session_state:
     target_option = st.session_state["new_workspace_option"]
     if target_option in workspace_options:
-        default_index = workspace_options.index(target_option)
-    # Clear the session state so that subsequent selections work normally
+        st.session_state["active_workspace_selection"] = target_option
     del st.session_state["new_workspace_option"]
 
-selected_option = st.sidebar.selectbox("Active RFP Workspaces", workspace_options, index=default_index)
+selected_option = st.sidebar.selectbox(
+    "Active RFP Workspaces", 
+    workspace_options, 
+    key="active_workspace_selection"
+)
 
 st.sidebar.markdown("---")
 
