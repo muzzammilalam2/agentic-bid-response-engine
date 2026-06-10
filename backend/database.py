@@ -130,6 +130,21 @@ def init_db():
     )
     """)
     
+    # Create Competitor Battlecards Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS competitor_battlecards (
+        workspace_id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    )
+    """)
+    
+    # Safely alter workspaces table if competitors column is missing
+    try:
+        cursor.execute("ALTER TABLE workspaces ADD COLUMN competitors TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
     conn.commit()
     
     # Seed data from dataset.xlsx if tables are empty

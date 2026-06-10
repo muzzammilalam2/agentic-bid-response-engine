@@ -1,9 +1,14 @@
 import streamlit as st
 import requests
 import datetime
+import os
+import sys
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from backend.scoring import WinProbabilityScorer
+scorer = WinProbabilityScorer()
 
 # Page configuration
 st.set_page_config(
@@ -186,6 +191,7 @@ RFP_TEMPLATES = {
         "sector": "IT Services",
         "budget": "PKR 25M",
         "deadline": (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
+        "competitors": "SoftSystems, TechCorp",
         "rfp_text": (
             "Section 1: General Requirements\n"
             "The selected vendor must possess a valid ISO 27001 Certification.\n"
@@ -201,6 +207,7 @@ RFP_TEMPLATES = {
         "sector": "IT Services",
         "budget": "PKR 85M",
         "deadline": (datetime.date.today() + datetime.timedelta(days=60)).strftime("%Y-%m-%d"),
+        "competitors": "SoftSystems, TechCorp, CyberEdge",
         "rfp_text": (
             "Section 1: Security & Compliance\n"
             "The selected vendor must possess a valid ISO 27001 Certification.\n"
@@ -216,6 +223,7 @@ RFP_TEMPLATES = {
         "sector": "Construction",
         "budget": "PKR 200M",
         "deadline": (datetime.date.today() + datetime.timedelta(days=45)).strftime("%Y-%m-%d"),
+        "competitors": "BuildCorp, FrontierRoads",
         "rfp_text": (
             "Section 1: Technical Standards\n"
             "The civil contractor must have prior experience in road engineering.\n"
@@ -230,6 +238,7 @@ RFP_TEMPLATES = {
         "sector": "Construction",
         "budget": "PKR 120M",
         "deadline": (datetime.date.today() + datetime.timedelta(days=90)).strftime("%Y-%m-%d"),
+        "competitors": "EcoPower, SunGrid",
         "rfp_text": (
             "Section 1: Operations & Compliance\n"
             "The engineering firm must possess a valid ISO 9001 certification.\n"
@@ -245,6 +254,7 @@ RFP_TEMPLATES = {
         "sector": "Logistics",
         "budget": "PKR 45M",
         "deadline": (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
+        "competitors": "SwiftLog, GlobalCargo",
         "rfp_text": (
             "Section 1: Operational Mandates\n"
             "The vendor must support real-time active GPS tracking standards for fleet capacity.\n"
@@ -268,7 +278,7 @@ if selected_option == "Select or Create Workspace":
     # Template filler selection box
     template_choice = st.selectbox("Fill Form using Prototype Template:", ["Empty Form"] + list(RFP_TEMPLATES.keys()), disabled=not can_create)
     
-    default_vals = {"title": "", "sector": "IT Services", "budget": "PKR 10M", "deadline": datetime.date.today(), "rfp_text": ""}
+    default_vals = {"title": "", "sector": "IT Services", "budget": "PKR 10M", "deadline": datetime.date.today(), "rfp_text": "", "competitors": ""}
     if template_choice != "Empty Form":
         t_data = RFP_TEMPLATES[template_choice]
         default_vals["title"] = t_data["title"]
@@ -276,6 +286,7 @@ if selected_option == "Select or Create Workspace":
         default_vals["budget"] = t_data["budget"]
         default_vals["deadline"] = datetime.datetime.strptime(t_data["deadline"], "%Y-%m-%d").date()
         default_vals["rfp_text"] = t_data["rfp_text"]
+        default_vals["competitors"] = t_data.get("competitors", "")
         
     with st.form("create_workspace_form"):
         title = st.text_input("RFP Project Title", value=default_vals["title"], disabled=not can_create)
@@ -287,6 +298,7 @@ if selected_option == "Select or Create Workspace":
         with col3:
             deadline = st.date_input("Submission Deadline", value=default_vals["deadline"], disabled=not can_create)
             
+        competitors = st.text_input("Competitors (comma-separated)", value=default_vals["competitors"], placeholder="e.g. SoftSystems, TechCorp", disabled=not can_create)
         rfp_file = st.file_uploader("Upload RFP File (PDF, DOCX, TXT):", type=["pdf", "docx", "txt"], disabled=not can_create)
         rfp_text = st.text_area("Or Paste RFP Technical Requirements / Prompt Text", value=default_vals["rfp_text"], height=200, disabled=not can_create)
         
@@ -307,7 +319,8 @@ if selected_option == "Select or Create Workspace":
                             "deadline": deadline.strftime("%Y-%m-%d"),
                             "rfp_text": rfp_text if rfp_text else "",
                             "use_llm": use_llm,
-                            "llm_model": selected_model
+                            "llm_model": selected_model,
+                            "competitors": competitors
                         }
                         files = {}
                         if rfp_file:
@@ -328,7 +341,6 @@ if selected_option == "Select or Create Workspace":
                     except Exception as e:
                         st.error(f"Failed to connect to API: {e}")
 
-else:
     # Selected Workspace Detail View
     selected_id = selected_option.split("[")[-1].replace("]", "").strip()
     
@@ -403,10 +415,59 @@ else:
         </div>
         """, unsafe_allow_html=True)
         
+    # Competitor details & gaps for simulator sandbox
+    competitors_str = ws.get("competitors") or ""
+    competitor_list = [c.strip() for c in competitors_str.split(",") if c.strip()]
+    competitor_count = len(competitor_list) if competitor_list else 0
+    gaps_count = sum(1 for item in checklist if item["status"] == "Fail")
+    
+    # Win Probability Simulator Sandbox Expandable Card
+    st.write("")
+    with st.expander("🔮 Win Probability Simulator Sandbox", expanded=False):
+        st.markdown("##### Adjust bid variables to simulate how they impact the overall Go/No-Go decision and win rate.")
+        col_sim1, col_sim2, col_sim3 = st.columns(3)
+        with col_sim1:
+            sim_budget = st.text_input("Simulated Budget (PKR or USD)", value=ws.get("budget", "PKR 10M"), key="sim_budget")
+        with col_sim2:
+            sim_compliance = st.slider("Simulated Compliance Fit (%)", min_value=0, max_value=100, value=int(breakdown['compliance_fit']), step=5, key="sim_compliance")
+        with col_sim3:
+            sim_competitors = st.slider("Simulated Competitor Count", min_value=0, max_value=10, value=competitor_count, step=1, key="sim_competitors")
+            
+        col_sim4, col_sim5 = st.columns(2)
+        with col_sim4:
+            sim_gaps = st.slider("Simulated Unresolved Gaps", min_value=0, max_value=15, value=gaps_count, key="sim_gaps")
+            
+        # Calculate simulated score
+        sim_results = scorer.calculate_score(
+            sector=ws.get("client", "IT Services"),
+            budget_str=sim_budget,
+            compliance_pct=sim_compliance,
+            gaps_count=sim_gaps,
+            competitor_count=sim_competitors
+        )
+        sim_prob = sim_results["win_probability"]
+        sim_dec = sim_results["decision"]
+        sim_breakdown = sim_results["breakdown"]
+        
+        col_res1, col_res2 = st.columns(2)
+        with col_res1:
+            st.markdown(f"#### Simulated Win Probability: <span style='color:{'#3fb950' if sim_dec=='GO' else '#f85149'};'>{sim_prob}%</span>", unsafe_allow_html=True)
+        with col_res2:
+            st.markdown(f"#### Simulated Recommendation: <span style='padding: 5px 15px; border-radius: 15px; background: {'#238636' if sim_dec=='GO' else '#da3633'}; color: white;'>{sim_dec}</span>", unsafe_allow_html=True)
+            
+        # Show breakdown comparison in columns
+        col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+        col_b1.metric("Budget Fit", f"{sim_breakdown['budget_fit']}%", f"{round(sim_breakdown['budget_fit'] - breakdown['budget_fit'], 1)}%")
+        col_b2.metric("Compliance Fit", f"{sim_breakdown['compliance_fit']}%", f"{round(sim_breakdown['compliance_fit'] - breakdown['compliance_fit'], 1)}%")
+        col_b3.metric("Gaps Score", f"{sim_breakdown['gaps_score']}%", f"{round(sim_breakdown['gaps_score'] - breakdown['gaps_score'], 1)}%")
+        col_b4.metric("Competitor Penalty", f"-{sim_breakdown['competitor_penalty']}%", f"{round(-sim_breakdown['competitor_penalty'] - (-breakdown['competitor_penalty']), 1)}%")
+        
     # Main Application tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab_battlecard, tab_copilot, tab3, tab4, tab5 = st.tabs([
         "📋 Compliance Checklist Grid", 
         "✍️ Technical Narrative Editor", 
+        "⚔️ Competitor Battlecard",
+        "💬 RFP Chat Copilot",
         "📊 Sector Evaluation Criteria", 
         "📋 SOW Plan & Estimates",
         "📥 Export & Download"
@@ -435,7 +496,7 @@ else:
                 """, unsafe_allow_html=True)
                 
                 # Interactive manual overrides
-                col_btn1, col_btn2, col_btn3, col_lock = st.columns([1.5, 1.5, 1.5, 5])
+                col_btn1, col_btn2, col_btn3, col_auto, col_lock = st.columns([1.5, 1.5, 1.5, 2.2, 3.3])
                 can_override = has_perm("override_checklist")
                 with col_btn1:
                     if st.button("Pass Requirement", key=f"p-{item['id']}", disabled=not can_override):
@@ -449,6 +510,27 @@ else:
                     if st.button("Waive Requirement", key=f"w-{item['id']}", disabled=not can_override):
                         requests.post(f"{API_URL}/workspaces/{selected_id}/checklist/{item['id']}/override", json={"status": "Waived", "notes": "Waived by client request"}, headers=headers)
                         st.rerun()
+                with col_auto:
+                    if item["status"] == "Fail":
+                        if st.button("🤖 Auto-Resolve Gap", key=f"auto-{item['id']}", disabled=not can_override, help="Generate mock credentials using Gemini and hot-reload ChromaDB index"):
+                            with st.spinner("AI is generating credentials and updating search indexes..."):
+                                try:
+                                    req_headers = headers.copy()
+                                    if use_llm and gemini_api_key:
+                                        req_headers["X-Gemini-API-Key"] = gemini_api_key
+                                        
+                                    res_auto = requests.post(
+                                        f"{API_URL}/workspaces/{selected_id}/checklist/{item['id']}/auto-resolve",
+                                        headers=req_headers,
+                                        params={"use_llm": use_llm, "llm_model": selected_model}
+                                    )
+                                    if res_auto.status_code == 200:
+                                        st.success("Resolved requirement gap successfully!")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"Failed to auto-resolve: {res_auto.text}")
+                                except Exception as e:
+                                    st.error(f"Error: {e}")
                 if not can_override:
                     with col_lock:
                         st.markdown("<span style='color:#f85149; font-size:0.9rem; line-height:38px;'>🔒 Overrides locked (Bid Managers only)</span>", unsafe_allow_html=True)
@@ -503,6 +585,79 @@ else:
                 """, unsafe_allow_html=True)
             st.markdown("---")
             
+    with tab_battlecard:
+        st.markdown("### ⚔️ Competitor Battlecard & Strategic Analysis")
+        st.markdown("Automated SWOT analysis and counter-punch strategies generated by the **Strategy Agent**.")
+        
+        battlecard_content = ""
+        with st.spinner("Analyzing competitors and generating strategic battlecard..."):
+            try:
+                req_headers = headers.copy()
+                if use_llm and gemini_api_key:
+                    req_headers["X-Gemini-API-Key"] = gemini_api_key
+                bat_res = requests.get(
+                    f"{API_URL}/workspaces/{selected_id}/battlecard",
+                    headers=req_headers,
+                    params={"use_llm": use_llm, "llm_model": selected_model}
+                )
+                if bat_res.status_code == 200:
+                    battlecard_content = bat_res.json().get("battlecard", "")
+                else:
+                    battlecard_content = f"Error: {bat_res.text}"
+            except Exception as e:
+                battlecard_content = f"Error loading battlecard: {e}"
+                
+        if battlecard_content:
+            st.markdown(battlecard_content)
+        else:
+            st.info("No competitor battlecard available.")
+
+    with tab_copilot:
+        st.markdown("### 💬 Context-Aware RFP Chat Copilot")
+        st.markdown("Ask questions about the parsed RFP requirements, bid budget, deadlines, and current draft answers.")
+        
+        if "chat_history" not in st.session_state:
+            st.session_state["chat_history"] = {}
+        if selected_id not in st.session_state["chat_history"]:
+            st.session_state["chat_history"][selected_id] = []
+            
+        chat_msgs = st.session_state["chat_history"][selected_id]
+        
+        # Display chat messages from history on app rerun
+        for msg in chat_msgs:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                
+        # React to user input
+        if prompt := st.chat_input("Ask about the RFP...", key="chat_input"):
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            chat_msgs.append({"role": "user", "content": prompt})
+            
+            with st.spinner("Copilot is thinking..."):
+                try:
+                    req_headers = headers.copy()
+                    if use_llm and gemini_api_key:
+                        req_headers["X-Gemini-API-Key"] = gemini_api_key
+                        
+                    chat_res = requests.post(
+                        f"{API_URL}/workspaces/{selected_id}/chat",
+                        json={"question": prompt},
+                        headers=req_headers,
+                        params={"use_llm": use_llm, "llm_model": selected_model}
+                    )
+                    if chat_res.status_code == 200:
+                        answer = chat_res.json().get("answer", "")
+                    else:
+                        answer = f"Error: {chat_res.text}"
+                except Exception as e:
+                    answer = f"Failed to connect to chatbot: {e}"
+                    
+            with st.chat_message("assistant"):
+                st.markdown(answer)
+            chat_msgs.append({"role": "assistant", "content": answer})
+            st.rerun()
+
     with tab3:
         st.markdown(f"### Standard Evaluation Criteria Taxonomy – {ws['client']}")
         st.markdown("This sector-specific scoring taxonomy is used by clients to grade proposal bids.")

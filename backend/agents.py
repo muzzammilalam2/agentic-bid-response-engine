@@ -13,7 +13,7 @@ class ProposalWorkflowManager:
         self.scorer = WinProbabilityScorer()
         self.rag = RAGEngine()
 
-    def run_workflow(self, workspace_id, rfp_title, rfp_text, sector, budget_str, deadline, use_llm=False, api_key=None, llm_model="gemini-1.5-flash"):
+    def run_workflow(self, workspace_id, rfp_title, rfp_text, sector, budget_str, deadline, use_llm=False, api_key=None, llm_model="gemini-1.5-flash", competitors=None):
         """
         Executes the multi-agent proposal flow:
         1. Analyst Agent: Parses RFP text to find compliance requirements and questions.
@@ -39,9 +39,9 @@ class ProposalWorkflowManager:
 
         # Initialize/Update Workspace
         cursor.execute("""
-        INSERT OR REPLACE INTO workspaces (id, title, client, budget, deadline, status)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """, (workspace_id, rfp_title, sector, budget_str, deadline, "Analysis"))
+        INSERT OR REPLACE INTO workspaces (id, title, client, budget, deadline, status, competitors)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (workspace_id, rfp_title, sector, budget_str, deadline, "Analysis", competitors))
         conn.commit()
         
         # 1. Analyst Agent - Parse requirements and questions
@@ -392,3 +392,174 @@ class ProposalWorkflowManager:
         ]
         
         return milestones, efforts, costs
+
+    def generate_battlecard(self, workspace_id, sector, competitors_str, use_llm=False, api_key=None, llm_model="gemini-1.5-flash"):
+        """
+        Generates a Competitor Battlecard using Gemini or defaults to a structured offline SWOT analysis.
+        Saves the generated markdown to the competitor_battlecards database cache.
+        """
+        if not competitors_str or not competitors_str.strip():
+            return "No competitors specified. Please enter competitor names to generate a battlecard."
+            
+        competitor_list = [c.strip() for c in competitors_str.split(",") if c.strip()]
+        battlecard_content = ""
+        
+        if use_llm:
+            effective_key = api_key or os.environ.get("GEMINI_API_KEY")
+            if effective_key:
+                try:
+                    genai.configure(api_key=effective_key)
+                    model = genai.GenerativeModel(llm_model)
+                    prompt = (
+                        f"You are a sales strategy and competitive intelligence agent. Analyze these competitors: {', '.join(competitor_list)} "
+                        f"in the context of the vertical sector: '{sector}'.\n\n"
+                        "Provide a structured Competitor Battlecard in markdown containing:\n"
+                        "1. **Executive Summary**: Strategic overview of the competitive landscape for this bid.\n"
+                        "2. **Competitor Profiles**: For each competitor, outline their estimated strengths, weaknesses, and pricing strategy.\n"
+                        "3. **Counter-Punch Strategies**: Specific, actionable talking points our proposal team can use to exploit their weaknesses and showcase our advantages (e.g., highlighting our SLA, certifications, or cost structure).\n\n"
+                        "Ensure the response is detailed, professional, and formatted in clean markdown."
+                    )
+                    response = model.generate_content(prompt)
+                    battlecard_content = response.text.strip()
+                except Exception as ex:
+                    print("Gemini Battlecard generation failed, falling back to rule-based SWOT:", ex)
+
+        if not battlecard_content:
+            sections = [
+                f"# ⚔️ Competitor Battlecard: {', '.join(competitor_list)}",
+                f"**Target Vertical Sector:** {sector}\n",
+                "## 1. Executive Summary",
+                f"This bid features active competition from {len(competitor_list)} companies. SoftSystems is known for low-cost bids but has history of SLA issues; TechCorp is premium-tier but slow to deploy. Our win theme must emphasize rapid delivery and 100% compliance.\n",
+                "## 2. Competitor Profiles"
+            ]
+            for comp in competitor_list:
+                sections.extend([
+                    f"### 🏢 Competitor: {comp}",
+                    "- **Estimated Strengths:** Local presence, aggressive pricing discounts, established client relationships.",
+                    "- **Estimated Weaknesses:** Limited specialized certifications (ISO 27001 missing/expired), slow support response times.",
+                    "- **Pricing Strategy:** Underbidding on initial licensing, heavy billing on change orders."
+                ])
+            sections.extend([
+                "\n## 3. Actionable Counter-Punches",
+                "- **SLA Focus:** Highlight our strict uptime SLAs and zero-fee credits to highlight competitors' historical downtime.",
+                "- **Compliance & Security:** Emphasize our valid ISO 27001 certification to highlight competitors' security gaps."
+            ])
+            battlecard_content = "\n".join(sections)
+            
+        conn = db_connect()
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT OR REPLACE INTO competitor_battlecards (workspace_id, content)
+        VALUES (?, ?)
+        """, (workspace_id, battlecard_content))
+        conn.commit()
+        conn.close()
+        
+        return battlecard_content
+
+    def resolve_requirement_gap(self, workspace_id, checklist_id, requirement_desc, use_llm=False, api_key=None, llm_model="gemini-1.5-flash"):
+        """
+        Creates a custom capability record to satisfy the failed checklist item.
+        Uses Gemini to generate realistic company credential info or fallback template.
+        Hot-reloads the RAG index, and re-evaluates compliance status.
+        """
+        cap_id = f"RESOLVED-{str(uuid.uuid4())[:6].upper()}"
+        cap_data = None
+        
+        if use_llm:
+            effective_key = api_key or os.environ.get("GEMINI_API_KEY")
+            if effective_key:
+                try:
+                    genai.configure(api_key=effective_key)
+                    model = genai.GenerativeModel(llm_model)
+                    prompt = (
+                        "You are an operations assistant. We are bidding on an RFP and need to generate a realistic mock "
+                        f"capability project summary/credential to satisfy this requirement: '{requirement_desc}'.\n\n"
+                        "Generate a realistic company project record that satisfies the requirement perfectly. "
+                        "Specify a year completed, contract value (e.g. PKR 15M), domain, duration, and target client type.\n"
+                        "Ensure your output is strictly a single JSON object. Do not include markdown codeblocks or other text, only the raw JSON matching this schema:\n"
+                        "{\n"
+                        "  \"domain\": \"...\",\n"
+                        "  \"project_summary\": \"...\",\n"
+                        "  \"certification\": \"...\",\n"
+                        "  \"year_completed\": 2025,\n"
+                        "  \"contract_value\": \"PKR 35M\",\n"
+                        "  \"duration_months\": 12,\n"
+                        "  \"client_type\": \"...\"\n"
+                        "}"
+                    )
+                    response = model.generate_content(prompt)
+                    clean_json = response.text.strip()
+                    if clean_json.startswith("```"):
+                        clean_json = re.sub(r"^```(?:json)?", "", clean_json)
+                        clean_json = re.sub(r"```$", "", clean_json).strip()
+                    cap_data = json.loads(clean_json)
+                except Exception as ex:
+                    print("Gemini Gap Auto-Resolve failed, falling back to templated credential generation:", ex)
+                    
+        if not cap_data:
+            domain = "General"
+            cert = "ISO 27001 Certified" if "iso" in requirement_desc.lower() or "security" in requirement_desc.lower() else "N/A"
+            if "sla" in requirement_desc.lower() or "uptime" in requirement_desc.lower():
+                domain = "IT Services"
+                project_summary = f"Custom Service Level Agreement setup with 99.9% uptime compliance tracker."
+            elif "road" in requirement_desc.lower() or "civil" in requirement_desc.lower() or "construction" in requirement_desc.lower():
+                domain = "Construction"
+                project_summary = f"Road & bridge structural engineering and HSE compliance project completed in 2024."
+            else:
+                project_summary = f"Corporate project deployment satisfying requirement: {requirement_desc}."
+                
+            cap_data = {
+                "domain": domain,
+                "project_summary": project_summary,
+                "certification": cert,
+                "year_completed": 2024,
+                "contract_value": "PKR 15M",
+                "duration_months": 12,
+                "client_type": "Target Client"
+            }
+            
+        conn = db_connect()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+        INSERT INTO capability_library (cap_id, domain, project_summary, certification, year_completed, contract_value, duration_months, client_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (cap_id, cap_data["domain"], cap_data["project_summary"], cap_data["certification"], cap_data["year_completed"], cap_data["contract_value"], cap_data["duration_months"], cap_data["client_type"]))
+        
+        cap_text = (
+            f"Domain: {cap_data['domain']}\n"
+            f"Project Title/Summary: {cap_data['project_summary']}\n"
+            f"Certification: {cap_data['certification']}\n"
+            f"Year Completed: {cap_data['year_completed']}\n"
+            f"Contract Value: {cap_data['contract_value']}\n"
+            f"Duration: {cap_data['duration_months']} months\n"
+            f"Client Type: {cap_data['client_type']}"
+        )
+        
+        cursor.execute("""
+        INSERT INTO capability_chunks (chunk_id, source_file, content, domain, metadata)
+        VALUES (?, ?, ?, ?, ?)
+        """, (
+            f"cap-resolve-{cap_id}",
+            "auto-resolve-gap",
+            cap_text,
+            cap_data["domain"],
+            json.dumps({"cap_id": cap_id, "contract_value": cap_data["contract_value"], "certification": cap_data["certification"]})
+        ))
+        
+        cursor.execute("""
+        UPDATE compliance_checklist 
+        SET status = 'Pass', matched_evidence = ?, notes = 'Resolved automatically via AI Gap Self-Correction Loop.'
+        WHERE id = ? AND workspace_id = ?
+        """, (f"Resolved by {cap_id} - {cap_data['project_summary']}", checklist_id, workspace_id))
+        
+        conn.commit()
+        conn.close()
+        
+        self.rag.reload_index()
+        return {
+            "status": "success",
+            "resolved_cap_id": cap_id,
+            "capability": cap_data
+        }
