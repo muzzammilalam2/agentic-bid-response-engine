@@ -158,7 +158,16 @@ if use_llm:
     import os
     env_key = os.environ.get("GEMINI_API_KEY", "")
     gemini_api_key = st.sidebar.text_input("Gemini API Key:", value=env_key, type="password", help="Enter your Google AI Studio API key. Left blank, it falls back to backend env var.")
-    model_options = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-1.5-flash", "antigravity-preview-05-2026"]
+    model_options = [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-1.5-flash-8b",
+        "gemini-2.5-flash",
+        "gemini-3.5-flash",
+        "gemini-1.5-flash",
+        "antigravity-preview-05-2026"
+    ]
     selected_model = st.sidebar.selectbox("Gemini Model:", options=model_options, index=0, help="Select the Google Gemini LLM model to use.")
 
 
