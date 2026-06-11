@@ -329,7 +329,7 @@ if selected_option == "Select or Create Workspace":
                 target_workspace_id = selected_rfp["RFP ID"]
                 target_title = selected_rfp["RFP Title"]
                 target_option = f"{target_title} [{target_workspace_id}]"
-                st.session_state["active_workspace_selection"] = target_option
+                st.session_state["new_workspace_option"] = target_option
                 st.rerun()
         else:
             st.info("No active RFPs matched the search or filter criteria.")
