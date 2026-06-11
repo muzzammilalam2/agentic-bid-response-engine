@@ -313,8 +313,24 @@ if selected_option == "Select or Create Workspace":
         if df_rows:
             import pandas as pd
             df = pd.DataFrame(df_rows)
-            # Render a premium sortable interactive dataframe
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.caption("💡 Click on any RFP row to load its detailed workspace view.")
+            # Render a premium sortable interactive dataframe with selection enabled
+            event = st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+            
+            if event.selection and len(event.selection.rows) > 0:
+                selected_idx = event.selection.rows[0]
+                selected_rfp = df_rows[selected_idx]
+                target_workspace_id = selected_rfp["RFP ID"]
+                target_title = selected_rfp["RFP Title"]
+                target_option = f"{target_title} [{target_workspace_id}]"
+                st.session_state["active_workspace_selection"] = target_option
+                st.rerun()
         else:
             st.info("No active RFPs matched the search or filter criteria.")
             
