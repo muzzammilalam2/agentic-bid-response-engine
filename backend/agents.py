@@ -60,22 +60,22 @@ class ProposalWorkflowManager:
             
             # Retrieve closest matches
             matches = self.rag.retrieve_matches(req_desc, limit=1)
-            cap = matches[0]["capability"] if matches else None
-            score = matches[0]["score"] if matches else 0.0
             
-            assessment = self._reviewer_assess(
-                req_desc=req_desc,
-                cap=cap,
-                score=score,
-                use_llm=gemini_active,
-                llm_model=llm_model,
-                api_key=api_key
-            )
+            status = "Pass"
+            evidence_str = "No suitable evidence found in the company library."
+            score = 0.0
             
-            status = assessment["status"]
-            evidence_str = assessment["explanation"]
-            
-            if status == "Fail":
+            if matches:
+                score = matches[0]["score"]
+                cap = matches[0]["capability"]
+                # If match similarity is low, count as a gap
+                if score < 40.0:
+                    status = "Fail"
+                    gaps_count += 1
+                else:
+                    evidence_str = f"Matched {cap['cap_id']} - {cap['project_summary']} (Value: {cap['contract_value']}, Cert: {cap['certification']})"
+            else:
+                status = "Fail"
                 gaps_count += 1
                 
             section = "Technical & Certification Requirements"
@@ -178,67 +178,6 @@ class ProposalWorkflowManager:
             "checklist_count": len(compliance_items),
             "questions_count": len(proposal_drafts)
         }
-
-    def _reviewer_assess(self, req_desc, cap, score, use_llm=False, llm_model="gemini-1.5-flash", api_key=None):
-        """
-        Assess compliance requirement against retrieved capability evidence using Gemini AI.
-        """
-        if use_llm and cap:
-            try:
-                effective_key = api_key or os.environ.get("GEMINI_API_KEY")
-                if effective_key:
-                    genai.configure(api_key=effective_key)
-                
-                prompt = (
-                    "You are a Compliance Reviewer. Assess each requirement using only the retrieved capability evidence.\n\n"
-                    "Rules:\n"
-                    "1. Use evidence-based reasoning only. Do not assume missing facts.\n"
-                    "2. Distinguish between direct evidence and inferred capability.\n"
-                    "3. For certifications (e.g., ISO, SOC 2, PCI DSS), mark status as 'Fail' unless the exact certification is explicitly mentioned in the retrieved evidence. Similar practices do not count as certification.\n"
-                    "4. If related capabilities indicate the company could reasonably meet the requirement, mark status as 'Pass' and explain why.\n"
-                    "5. If there is insufficient evidence and no reasonable inference can be made, mark status as 'Fail'.\n"
-                    "6. Be conservative and never overstate compliance.\n\n"
-                    "Analyze this requirement:\n"
-                    f"Requirement: {req_desc}\n\n"
-                    "Against this retrieved capability evidence:\n"
-                    f"Capability ID: {cap.get('cap_id', 'N/A')}\n"
-                    f"Project Summary: {cap.get('project_summary', 'N/A')}\n"
-                    f"Certifications: {cap.get('certification', 'N/A')}\n"
-                    f"Domain: {cap.get('domain', 'N/A')}\n"
-                    f"Year Completed: {cap.get('year_completed', 'N/A')}\n"
-                    f"Contract Value: {cap.get('contract_value', 'N/A')}\n"
-                    f"Client Type: {cap.get('client_type', 'N/A')}\n\n"
-                    "Format your response as a raw JSON object with keys 'status' (must be either 'Pass' or 'Fail') and 'explanation' (detailing your reasoning and citing the evidence). Do not output markdown codeblocks or explanation outside JSON, only raw JSON."
-                )
-                model = genai.GenerativeModel(llm_model)
-                response = model.generate_content(prompt)
-                
-                clean_json_str = response.text.strip()
-                if clean_json_str.startswith("```"):
-                    clean_json_str = re.sub(r"^```(?:json)?", "", clean_json_str)
-                    clean_json_str = re.sub(r"```$", "", clean_json_str).strip()
-                
-                parsed_data = json.loads(clean_json_str)
-                if isinstance(parsed_data, dict) and "status" in parsed_data and "explanation" in parsed_data:
-                    status_val = "Pass" if str(parsed_data["status"]).strip().lower() in ["pass", "compliant", "yes"] else "Fail"
-                    return {
-                        "status": status_val,
-                        "explanation": str(parsed_data["explanation"]).strip()
-                    }
-            except Exception as e:
-                print("Gemini Reviewer compliance assessment failed, falling back to rule-based logic:", e)
-                
-        # Default Rule-based check
-        if cap and score >= 40.0:
-            return {
-                "status": "Pass",
-                "explanation": f"Matched {cap['cap_id']} - {cap['project_summary']} (Value: {cap['contract_value']}, Cert: {cap['certification']})"
-            }
-        else:
-            return {
-                "status": "Fail",
-                "explanation": "No suitable evidence found in the company library." if not cap else f"Insufficient match confidence ({score}%). Found: {cap['project_summary']}"
-            }
 
     def _analyst_parse(self, rfp_text, use_llm=False, llm_model="gemini-1.5-flash"):
         """
