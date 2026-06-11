@@ -66,9 +66,43 @@ def get_workspaces():
     conn = db_connect()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM workspaces")
-    rows = cursor.fetchall()
+    ws_rows = cursor.fetchall()
+    
+    results = []
+    for ws_row in ws_rows:
+        ws = dict(ws_row)
+        ws_id = ws["id"]
+        
+        # Fetch checklist to calculate compliance percentage and gaps
+        cursor.execute("SELECT status FROM compliance_checklist WHERE workspace_id = ?", (ws_id,))
+        checklist_rows = cursor.fetchall()
+        
+        total_items = len(checklist_rows)
+        passed_items = sum(1 for item in checklist_rows if item["status"] == "Pass")
+        gaps_count = sum(1 for item in checklist_rows if item["status"] == "Fail")
+        compliance_pct = (passed_items / total_items * 100) if total_items > 0 else 100
+        
+        competitors_str = ws.get("competitors") or ""
+        competitor_list = [c.strip() for c in competitors_str.split(",") if c.strip()]
+        competitor_count = len(competitor_list) if competitor_list else 0
+        
+        scoring_res = workflow_manager.scorer.calculate_score(
+            sector=ws.get("client", "IT Services"),
+            budget_str=ws.get("budget", "PKR 0M"),
+            compliance_pct=compliance_pct,
+            gaps_count=gaps_count,
+            competitor_count=competitor_count
+        )
+        
+        ws["win_probability"] = scoring_res["win_probability"]
+        ws["decision"] = scoring_res["decision"]
+        ws["compliance_pct"] = round(compliance_pct, 1)
+        ws["gaps_count"] = gaps_count
+        
+        results.append(ws)
+        
     conn.close()
-    return [dict(r) for r in rows]
+    return results
 
 @app.get("/criteria")
 def get_criteria():
@@ -168,17 +202,24 @@ def create_workspace(
     x_gemini_api_key: str = Header(None),
     username: str = Depends(verify_permission("create_workspace"))
 ):
+    workspace_id = str(uuid.uuid4())[:8]
+
     if rfp_file:
         try:
             content = rfp_file.file.read()
+            # Save file to uploads folder on disk under workspace_id directory
+            uploads_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads", workspace_id)
+            os.makedirs(uploads_dir, exist_ok=True)
+            file_path = os.path.join(uploads_dir, rfp_file.filename)
+            with open(file_path, "wb") as f:
+                f.write(content)
+                
             rfp_text = parse_document(content, rfp_file.filename)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to parse RFP file: {e}")
             
     if not rfp_text or not rfp_text.strip():
         raise HTTPException(status_code=400, detail="RFP requirements text or uploaded RFP file is required.")
-
-    workspace_id = str(uuid.uuid4())[:8]
     
     # Run Agentic Proposal Loop (handling both Offline and LLM modes)
     res = workflow_manager.run_workflow(
@@ -208,6 +249,13 @@ def upload_capability_document(
 ):
     try:
         content = file.file.read()
+        # Save file to capabilities folder in root directory
+        caps_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "capabilities")
+        os.makedirs(caps_dir, exist_ok=True)
+        file_path = os.path.join(caps_dir, file.filename)
+        with open(file_path, "wb") as f:
+            f.write(content)
+            
         text = parse_document(content, file.filename)
         if not text.strip():
             raise HTTPException(status_code=400, detail="Uploaded file is empty or text extraction failed.")

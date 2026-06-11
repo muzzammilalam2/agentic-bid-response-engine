@@ -12,3 +12,5 @@ backend/temp/
 frontend/temp/
 .streamlit/
 .env
+uploads/
+capabilities/

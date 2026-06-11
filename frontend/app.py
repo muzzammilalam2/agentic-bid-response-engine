@@ -270,78 +270,127 @@ RFP_TEMPLATES = {
 }
 
 if selected_option == "Select or Create Workspace":
-    st.markdown("<h1 style='color:#58a6ff;'>🚀 Create New RFP Workspace</h1>", unsafe_allow_html=True)
-    st.markdown("Ingest a tender or request document, run multi-agent RAG analysis, and auto-draft proposals.")
+    st.markdown("<h1 style='color:#58a6ff;'>🚀 RFP Workspace Center</h1>", unsafe_allow_html=True)
     
-    can_create = has_perm("create_workspace")
-    if not can_create:
-        st.warning("🔒 Workspace creation is locked for your current role. Switch to a Bid Manager role (e.g. admin) to create new RFPs.")
-        
-    # Template filler selection box
-    template_choice = st.selectbox("Fill Form using Prototype Template:", ["Empty Form"] + list(RFP_TEMPLATES.keys()), disabled=not can_create)
+    sub_tab1, sub_tab2 = st.tabs(["📂 Active RFPs Dashboard", "➕ Initialize New Workspace"])
     
-    default_vals = {"title": "", "sector": "IT Services", "budget": "PKR 10M", "deadline": datetime.date.today(), "rfp_text": "", "competitors": ""}
-    if template_choice != "Empty Form":
-        t_data = RFP_TEMPLATES[template_choice]
-        default_vals["title"] = t_data["title"]
-        default_vals["sector"] = t_data["sector"]
-        default_vals["budget"] = t_data["budget"]
-        default_vals["deadline"] = datetime.datetime.strptime(t_data["deadline"], "%Y-%m-%d").date()
-        default_vals["rfp_text"] = t_data["rfp_text"]
-        default_vals["competitors"] = t_data.get("competitors", "")
+    with sub_tab1:
+        st.markdown("### Active RFP Proposals & Stats")
+        st.markdown("Search, filter, and track performance scores for all parsed proposal bids.")
         
-    with st.form("create_workspace_form"):
-        title = st.text_input("RFP Project Title", value=default_vals["title"], disabled=not can_create)
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            sector = st.selectbox("Industry Vertical", ["IT Services", "Construction", "Energy", "Healthcare", "Logistics"], index=["IT Services", "Construction", "Energy", "Healthcare", "Logistics"].index(default_vals["sector"]), disabled=not can_create)
-        with col2:
-            budget = st.text_input("RFP Estimated Budget", value=default_vals["budget"], disabled=not can_create)
-        with col3:
-            deadline = st.date_input("Submission Deadline", value=default_vals["deadline"], disabled=not can_create)
+        # Search & filters
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            search_query = st.text_input("🔍 Search by Title, ID, or Competitor:", placeholder="Type to search...", key="rfp_search_query")
+        with col_f2:
+            filter_sector = st.selectbox("Filter by Sector Vertical:", ["All Sectors", "IT Services", "Construction", "Energy", "Healthcare", "Logistics"], key="rfp_filter_sector")
             
-        competitors = st.text_input("Competitors (comma-separated)", value=default_vals["competitors"], placeholder="e.g. SoftSystems, TechCorp", disabled=not can_create)
-        rfp_file = st.file_uploader("Upload RFP File (PDF, DOCX, TXT):", type=["pdf", "docx", "txt"], disabled=not can_create)
-        rfp_text = st.text_area("Or Paste RFP Technical Requirements / Prompt Text", value=default_vals["rfp_text"], height=200, disabled=not can_create)
+        # Compile list of active RFPs
+        df_rows = []
+        for w in workspaces:
+            # Filters
+            if filter_sector != "All Sectors" and w.get("client") != filter_sector:
+                continue
+            if search_query:
+                q = search_query.lower()
+                title_val = w.get("title", "") or ""
+                id_val = w.get("id", "") or ""
+                comps_val = w.get("competitors", "") or ""
+                if q not in title_val.lower() and q not in id_val.lower() and q not in comps_val.lower():
+                    continue
+            
+            df_rows.append({
+                "RFP ID": w.get("id"),
+                "RFP Title": w.get("title"),
+                "Vertical Sector": w.get("client"),
+                "Est. Budget": w.get("budget"),
+                "Deadline": w.get("deadline"),
+                "Win Probability": f"{w.get('win_probability', 0.0)}%",
+                "Recommendation": w.get("decision", "N/A"),
+                "Compliance Gaps": f"{w.get('gaps_count', 0)} fail(s)"
+            })
+            
+        if df_rows:
+            import pandas as pd
+            df = pd.DataFrame(df_rows)
+            # Render a premium sortable interactive dataframe
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No active RFPs matched the search or filter criteria.")
+            
+    with sub_tab2:
+        st.markdown("### Initialize New RFP Workspace")
+        st.markdown("Ingest a tender or request document, run multi-agent RAG analysis, and auto-draft proposals.")
         
-        submitted = st.form_submit_button("Run Multi-Agent Response Engine ⚡", disabled=not can_create)
+        can_create = has_perm("create_workspace")
+        if not can_create:
+            st.warning("🔒 Workspace creation is locked for your current role. Switch to a Bid Manager role (e.g. admin) to create new RFPs.")
+            
+        # Template filler selection box
+        template_choice = st.selectbox("Fill Form using Prototype Template:", ["Empty Form"] + list(RFP_TEMPLATES.keys()), disabled=not can_create)
         
-        if submitted:
-            if not title:
-                st.error("Please enter a project title.")
-            elif not rfp_text and not rfp_file:
-                st.error("Please upload an RFP file or paste technical requirements text.")
-            else:
-                with st.spinner("Executing Agent Core loops (Analyst -> Researcher -> Scorer -> Writer -> Reviewer)..."):
-                    try:
-                        payload = {
-                            "title": title,
-                            "sector": sector,
-                            "budget": budget,
-                            "deadline": deadline.strftime("%Y-%m-%d"),
-                            "rfp_text": rfp_text if rfp_text else "",
-                            "use_llm": use_llm,
-                            "llm_model": selected_model,
-                            "competitors": competitors
-                        }
-                        files = {}
-                        if rfp_file:
-                            files["rfp_file"] = (rfp_file.name, rfp_file.getvalue(), rfp_file.type)
-                            
-                        req_headers = headers.copy()
-                        if use_llm and gemini_api_key:
-                            req_headers["X-Gemini-API-Key"] = gemini_api_key
-                            
-                        res = requests.post(f"{API_URL}/workspaces", data=payload, files=files if rfp_file else None, headers=req_headers)
-                        if res.status_code == 200:
-                            ws_id = res.json()["workspace_id"]
-                            st.session_state["new_workspace_option"] = f"{title} [{ws_id}]"
-                            st.success(f"Success! Workspace {ws_id} initialized.")
-                            st.rerun()
-                        else:
-                            st.error(f"Error starting workflow: {res.text}")
-                    except Exception as e:
-                        st.error(f"Failed to connect to API: {e}")
+        default_vals = {"title": "", "sector": "IT Services", "budget": "PKR 10M", "deadline": datetime.date.today(), "rfp_text": "", "competitors": ""}
+        if template_choice != "Empty Form":
+            t_data = RFP_TEMPLATES[template_choice]
+            default_vals["title"] = t_data["title"]
+            default_vals["sector"] = t_data["sector"]
+            default_vals["budget"] = t_data["budget"]
+            default_vals["deadline"] = datetime.datetime.strptime(t_data["deadline"], "%Y-%m-%d").date()
+            default_vals["rfp_text"] = t_data["rfp_text"]
+            default_vals["competitors"] = t_data.get("competitors", "")
+            
+        with st.form("create_workspace_form"):
+            title = st.text_input("RFP Project Title", value=default_vals["title"], disabled=not can_create)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                sector = st.selectbox("Industry Vertical", ["IT Services", "Construction", "Energy", "Healthcare", "Logistics"], index=["IT Services", "Construction", "Energy", "Healthcare", "Logistics"].index(default_vals["sector"]), disabled=not can_create)
+            with col2:
+                budget = st.text_input("RFP Estimated Budget", value=default_vals["budget"], disabled=not can_create)
+            with col3:
+                deadline = st.date_input("Submission Deadline", value=default_vals["deadline"], disabled=not can_create)
+                
+            competitors = st.text_input("Competitors (comma-separated)", value=default_vals["competitors"], placeholder="e.g. SoftSystems, TechCorp", disabled=not can_create)
+            rfp_file = st.file_uploader("Upload RFP File (PDF, DOCX, TXT):", type=["pdf", "docx", "txt"], disabled=not can_create)
+            rfp_text = st.text_area("Or Paste RFP Technical Requirements / Prompt Text", value=default_vals["rfp_text"], height=200, disabled=not can_create)
+            
+            submitted = st.form_submit_button("Run Multi-Agent Response Engine ⚡", disabled=not can_create)
+            
+            if submitted:
+                if not title:
+                    st.error("Please enter a project title.")
+                elif not rfp_text and not rfp_file:
+                    st.error("Please upload an RFP file or paste technical requirements text.")
+                else:
+                    with st.spinner("Executing Agent Core loops (Analyst -> Researcher -> Scorer -> Writer -> Reviewer)..."):
+                        try:
+                            payload = {
+                                "title": title,
+                                "sector": sector,
+                                "budget": budget,
+                                "deadline": deadline.strftime("%Y-%m-%d"),
+                                "rfp_text": rfp_text if rfp_text else "",
+                                "use_llm": use_llm,
+                                "llm_model": selected_model,
+                                "competitors": competitors
+                            }
+                            files = {}
+                            if rfp_file:
+                                files["rfp_file"] = (rfp_file.name, rfp_file.getvalue(), rfp_file.type)
+                                
+                            req_headers = headers.copy()
+                            if use_llm and gemini_api_key:
+                                req_headers["X-Gemini-API-Key"] = gemini_api_key
+                                
+                            res = requests.post(f"{API_URL}/workspaces", data=payload, files=files if rfp_file else None, headers=req_headers)
+                            if res.status_code == 200:
+                                ws_id = res.json()["workspace_id"]
+                                st.session_state["new_workspace_option"] = f"{title} [{ws_id}]"
+                                st.success(f"Success! Workspace {ws_id} initialized.")
+                                st.rerun()
+                            else:
+                                st.error(f"Error starting workflow: {res.text}")
+                        except Exception as e:
+                            st.error(f"Failed to connect to API: {e}")
 
 else:
     # Selected Workspace Detail View
