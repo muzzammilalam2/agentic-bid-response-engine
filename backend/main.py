@@ -66,9 +66,43 @@ def get_workspaces():
     conn = db_connect()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM workspaces")
-    rows = cursor.fetchall()
+    ws_rows = cursor.fetchall()
+    
+    results = []
+    for ws_row in ws_rows:
+        ws = dict(ws_row)
+        ws_id = ws["id"]
+        
+        # Fetch checklist to calculate compliance percentage and gaps
+        cursor.execute("SELECT status FROM compliance_checklist WHERE workspace_id = ?", (ws_id,))
+        checklist_rows = cursor.fetchall()
+        
+        total_items = len(checklist_rows)
+        passed_items = sum(1 for item in checklist_rows if item["status"] == "Pass")
+        gaps_count = sum(1 for item in checklist_rows if item["status"] == "Fail")
+        compliance_pct = (passed_items / total_items * 100) if total_items > 0 else 100
+        
+        competitors_str = ws.get("competitors") or ""
+        competitor_list = [c.strip() for c in competitors_str.split(",") if c.strip()]
+        competitor_count = len(competitor_list) if competitor_list else 0
+        
+        scoring_res = workflow_manager.scorer.calculate_score(
+            sector=ws.get("client", "IT Services"),
+            budget_str=ws.get("budget", "PKR 0M"),
+            compliance_pct=compliance_pct,
+            gaps_count=gaps_count,
+            competitor_count=competitor_count
+        )
+        
+        ws["win_probability"] = scoring_res["win_probability"]
+        ws["decision"] = scoring_res["decision"]
+        ws["compliance_pct"] = round(compliance_pct, 1)
+        ws["gaps_count"] = gaps_count
+        
+        results.append(ws)
+        
     conn.close()
-    return [dict(r) for r in rows]
+    return results
 
 @app.get("/criteria")
 def get_criteria():
@@ -132,11 +166,16 @@ def get_workspace_detail(workspace_id: str):
     passed_items = sum(1 for item in checklist if item["status"] == "Pass")
     compliance_pct = (passed_items / total_items * 100) if total_items > 0 else 100
     
+    competitors_str = ws.get("competitors") or ""
+    competitor_list = [c.strip() for c in competitors_str.split(",") if c.strip()]
+    competitor_count = len(competitor_list) if competitor_list else 0
+    
     scoring_res = workflow_manager.scorer.calculate_score(
         sector=ws.get("client", "IT Services"), # fallbacks
         budget_str=ws.get("budget", "PKR 0M"),
         compliance_pct=compliance_pct,
-        gaps_count=gaps_count
+        gaps_count=gaps_count,
+        competitor_count=competitor_count
     )
     
     return {
@@ -155,6 +194,7 @@ def create_workspace(
     sector: str = Form(...),
     budget: str = Form(...),
     deadline: str = Form(...),
+    competitors: str = Form(None),
     rfp_text: str = Form(None),
     rfp_file: UploadFile = File(None),
     use_llm: bool = Form(False),
@@ -162,17 +202,24 @@ def create_workspace(
     x_gemini_api_key: str = Header(None),
     username: str = Depends(verify_permission("create_workspace"))
 ):
+    workspace_id = str(uuid.uuid4())[:8]
+
     if rfp_file:
         try:
             content = rfp_file.file.read()
+            # Save file to uploads folder on disk under workspace_id directory
+            uploads_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads", workspace_id)
+            os.makedirs(uploads_dir, exist_ok=True)
+            file_path = os.path.join(uploads_dir, rfp_file.filename)
+            with open(file_path, "wb") as f:
+                f.write(content)
+                
             rfp_text = parse_document(content, rfp_file.filename)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to parse RFP file: {e}")
             
     if not rfp_text or not rfp_text.strip():
         raise HTTPException(status_code=400, detail="RFP requirements text or uploaded RFP file is required.")
-
-    workspace_id = str(uuid.uuid4())[:8]
     
     # Run Agentic Proposal Loop (handling both Offline and LLM modes)
     res = workflow_manager.run_workflow(
@@ -184,7 +231,8 @@ def create_workspace(
         deadline=deadline,
         use_llm=use_llm,
         api_key=x_gemini_api_key,
-        llm_model=llm_model
+        llm_model=llm_model,
+        competitors=competitors
     )
     
     return {
@@ -201,6 +249,13 @@ def upload_capability_document(
 ):
     try:
         content = file.file.read()
+        # Save file to capabilities folder in root directory
+        caps_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "capabilities")
+        os.makedirs(caps_dir, exist_ok=True)
+        file_path = os.path.join(caps_dir, file.filename)
+        with open(file_path, "wb") as f:
+            f.write(content)
+            
         text = parse_document(content, file.filename)
         if not text.strip():
             raise HTTPException(status_code=400, detail="Uploaded file is empty or text extraction failed.")
@@ -442,3 +497,150 @@ def export_workspace_proposal(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=f"{ws['title'].lower().replace(' ', '_')}_proposal.docx"
     )
+
+class ChatRequest(BaseModel):
+    question: str
+
+@app.get("/workspaces/{workspace_id}/battlecard")
+def get_battlecard(
+    workspace_id: str,
+    x_gemini_api_key: str = Header(None),
+    use_llm: bool = Query(False),
+    llm_model: str = Query("gemini-1.5-flash"),
+    force_refresh: bool = Query(False)
+):
+    conn = db_connect()
+    cursor = conn.cursor()
+    
+    if not force_refresh:
+        cursor.execute("SELECT content FROM competitor_battlecards WHERE workspace_id = ?", (workspace_id,))
+        row = cursor.fetchone()
+        
+        if row:
+            conn.close()
+            return {"battlecard": row["content"]}
+        
+    # Generate dynamically if missing
+    cursor.execute("SELECT client, competitors FROM workspaces WHERE id = ?", (workspace_id,))
+    ws_row = cursor.fetchone()
+    if not ws_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Workspace not found")
+        
+    competitors = ws_row["competitors"]
+    sector = ws_row["client"]
+    conn.close()
+    
+    if not competitors or not competitors.strip():
+        return {"battlecard": "No competitors specified for this workspace."}
+        
+    content = workflow_manager.generate_battlecard(
+        workspace_id=workspace_id,
+        sector=sector,
+        competitors_str=competitors,
+        use_llm=use_llm,
+        api_key=x_gemini_api_key,
+        llm_model=llm_model
+    )
+    return {"battlecard": content}
+
+@app.post("/workspaces/{workspace_id}/chat")
+def chat_workspace(
+    workspace_id: str,
+    payload: ChatRequest,
+    x_gemini_api_key: str = Header(None),
+    use_llm: bool = Query(False),
+    llm_model: str = Query("gemini-1.5-flash")
+):
+    conn = db_connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT title, client, budget, deadline FROM workspaces WHERE id = ?", (workspace_id,))
+    ws_row = cursor.fetchone()
+    if not ws_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Workspace not found")
+        
+    cursor.execute("SELECT description FROM compliance_checklist WHERE workspace_id = ?", (workspace_id,))
+    reqs = [r["description"] for r in cursor.fetchall()]
+    
+    cursor.execute("SELECT question_text, drafted_answer FROM proposal_drafts WHERE workspace_id = ?", (workspace_id,))
+    drafts = [f"Q: {d['question_text']}\nDraft Answer: {d['drafted_answer']}" for d in cursor.fetchall()]
+    conn.close()
+    
+    workspace_summary = (
+        f"Workspace Title: {ws_row['title']}\n"
+        f"Industry Sector: {ws_row['client']}\n"
+        f"Budget: {ws_row['budget']}\n"
+        f"Deadline: {ws_row['deadline']}\n"
+        f"Extracted Requirements:\n" + "\n".join(f"- {r}" for r in reqs) + "\n\n"
+        f"Proposal Draft Sections:\n" + "\n\n".join(drafts)
+    )
+    
+    answer = ""
+    if use_llm:
+        effective_key = x_gemini_api_key or os.environ.get("GEMINI_API_KEY")
+        if effective_key:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=effective_key)
+                model = genai.GenerativeModel(llm_model)
+                prompt = (
+                    "You are a helpful bid-proposal workspace assistant/copilot.\n"
+                    "You have access to the details of the active proposal workspace:\n"
+                    f"=== WORKSPACE DETAILS ===\n{workspace_summary}\n=========================\n\n"
+                    f"The user is asking: '{payload.question}'\n"
+                    "Answer the user's question precisely and professionally based on the context above. If they ask about payment terms, timeline, or qualifications that are not explicitly documented, advise them clearly."
+                )
+                response = model.generate_content(prompt)
+                answer = response.text.strip()
+            except Exception as e:
+                answer = f"Gemini Copilot encountered an error: {e}"
+                
+    if not answer:
+        q = payload.question.lower()
+        if "budget" in q or "price" in q:
+            answer = f"The current workspace budget reference is {ws_row['budget']}."
+        elif "deadline" in q or "due" in q:
+            answer = f"The submission deadline is configured as {ws_row['deadline']}."
+        elif "sector" in q or "vertical" in q:
+            answer = f"This bid is configured under the '{ws_row['client']}' vertical."
+        elif "requirements" in q or "compliance" in q:
+            answer = f"The workspace has {len(reqs)} compliance checklist requirements:\n" + "\n".join(f"- {r}" for r in reqs[:5])
+        else:
+            answer = (
+                "RFP Copilot (Offline Mode):\n"
+                "To chat dynamically and query custom details, please enable **Gemini AI Mode** in the sidebar. "
+                f"The current workspace context has {len(reqs)} requirements and {len(drafts)} proposal draft sections."
+            )
+            
+    return {"answer": answer}
+
+@app.post("/workspaces/{workspace_id}/checklist/{checklist_id}/auto-resolve")
+def auto_resolve_checklist_item(
+    workspace_id: str,
+    checklist_id: str,
+    x_gemini_api_key: str = Header(None),
+    use_llm: bool = Query(False),
+    llm_model: str = Query("gemini-1.5-flash")
+):
+    conn = db_connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT description, status FROM compliance_checklist WHERE id = ? AND workspace_id = ?", (checklist_id, workspace_id))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Checklist item not found")
+        
+    if row["status"] == "Pass":
+        return {"message": "Requirement is already passing.", "status": "Pass"}
+        
+    res = workflow_manager.resolve_requirement_gap(
+        workspace_id=workspace_id,
+        checklist_id=checklist_id,
+        requirement_desc=row["description"],
+        use_llm=use_llm,
+        api_key=x_gemini_api_key,
+        llm_model=llm_model
+    )
+    return res
